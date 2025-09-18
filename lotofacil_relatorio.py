@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 import sys
 import time
@@ -22,6 +20,7 @@ def fetch_concurso(numero: int, retries: int = 3, backoff: float = 1.5) -> Dict:
     Baixa o JSON de um concurso da Lotofácil no portal de Loterias CAIXA.
     Retorna o dicionário JSON (ou lança exceção após esgotar retries).
     """
+    print(f"Baixando concurso {numero} ...")
     url = f"{CAIXA_BASE}/{numero}"
     last_err = None
     for i in range(retries):
@@ -45,6 +44,7 @@ def parse_dezenas(payload: Dict) -> Tuple[int, List[int]]:
     Extrai (numero_do_concurso, lista_de_15_dezenas_int) do payload.
     O portal pode usar 'listaDezenas' ou 'dezenas' (strings).
     """
+    print("Analisando dezenas ...")
     numero = payload.get("numero")
     dezenas_raw = payload.get("listaDezenas") or payload.get("dezenas") or []
     # normaliza para ints
@@ -63,6 +63,7 @@ def baixar_intervalo(conc_ini: int, conc_fim: int, cache_csv: Path) -> pd.DataFr
     Baixa (ou recarrega do CSV) os concursos no intervalo e devolve um DataFrame:
     colunas: Concurso, D1..D15
     """
+    print(f"Verificando cache em {cache_csv} ...")
     if cache_csv.exists():
         df = pd.read_csv(cache_csv, sep=";", encoding="utf-8")
         df = df[(df["Concurso"] >= conc_ini) & (df["Concurso"] <= conc_fim)].copy()
@@ -71,6 +72,7 @@ def baixar_intervalo(conc_ini: int, conc_fim: int, cache_csv: Path) -> pd.DataFr
         df = pd.DataFrame()
         faltantes = set(range(conc_ini, conc_fim + 1))
 
+    print(f"Concursos faltantes no cache: {sorted(faltantes)}")
     registros = []
     for n in sorted(faltantes):
         payload = fetch_concurso(n)
@@ -79,6 +81,7 @@ def baixar_intervalo(conc_ini: int, conc_fim: int, cache_csv: Path) -> pd.DataFr
         # breve pausa para evitar throttling
         time.sleep(0.15)
 
+    print(f"Atualizando cache em {cache_csv} ...")
     if registros:
         df_novo = pd.DataFrame(registros)
         if df.empty:
@@ -98,6 +101,7 @@ def freq_dezenas(df: pd.DataFrame) -> pd.DataFrame:
     """
     Retorna tabela com frequência de cada dezena (1..25), ordenada por dezena (crescente).
     """
+    print("Calculando frequência das dezenas ...")
     todas = df[[f"D{i}" for i in range(1, 16)]].values.flatten()
     s = pd.Series(todas, dtype="int64")
     freq = s.value_counts().sort_index()
@@ -111,6 +115,7 @@ def paridade_totais(df: pd.DataFrame) -> Tuple[int, int]:
     """
     Conta totais absolutos de dezenas pares e ímpares no dataframe.
     """
+    print("Calculando totais de paridade ...")  
     todas = pd.Series(df[[f"D{i}" for i in range(1, 16)]].values.flatten(), dtype="int64")
     pares = int((todas % 2 == 0).sum())
     impares = int((todas % 2 != 0).sum())
@@ -122,6 +127,7 @@ def distribuicao_paridade_por_concurso(df: pd.DataFrame) -> pd.DataFrame:
     Retorna uma tabela com colunas: ParesNoConcurso, FrequenciaConcursos, %
     (Ímpares = 15 - ParesNoConcurso)
     """
+    print("Calculando distribuição de paridade por concurso ...")
     pares_por_concurso = []
     for _, row in df.iterrows():
         dezenas = [row[f"D{i}"] for i in range(1, 16)]
@@ -138,6 +144,7 @@ def distribuicao_paridade_por_concurso(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def gerar_relatorio(conc_ini: int, conc_fim: int, saida_dir: Path) -> None:
+    print(f'Inicio geração do relatório...')
     saida_dir.mkdir(parents=True, exist_ok=True)
     cache_csv = saida_dir / "lotofacil_resultados.csv"
 
