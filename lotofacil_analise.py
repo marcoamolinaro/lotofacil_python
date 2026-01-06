@@ -65,6 +65,22 @@ def fetch_ultimo_concurso() -> Dict:
     return resp.json()
 
 
+def obter_data_minima_disponivel() -> Optional[dt.date]:
+    """Obtém a data do primeiro concurso disponível (concurso 1) na API.
+
+    Retorna None se não for possível consultar.
+    """
+    try:
+        logger.info("[API] Consultando data mínima (concurso 1)...")
+        dados = fetch_concurso(1)
+        data_min = parse_data_apuracao(dados["dataApuracao"])  # type: ignore[index]
+        logger.info(f"[API] Data mínima disponível: {data_min}")
+        return data_min
+    except Exception as e:
+        logger.warning(f"[API] Não foi possível obter a data mínima: {e}")
+        return None
+
+
 def concurso_json_para_linha(concurso_json: Dict) -> Dict:
     """
     Converte o JSON do concurso em um dict no formato:
@@ -119,10 +135,29 @@ def carregar_resultados_csv(caminho: str) -> pd.DataFrame:
 
 
 def salvar_resultados_csv(df: pd.DataFrame, caminho: str) -> None:
-    """Salva o DF no CSV."""
-    logger.info(f"[CSV] Salvando {len(df)} registros no arquivo {caminho}...")
+    """Salva o DF inteiro no CSV (reescreve o arquivo)."""
+    logger.info(f"[CSV] Salvando {len(df)} registros no arquivo {caminho} (rewrite)...")
     df.to_csv(caminho, index=False)
     logger.info("[CSV] Salvamento concluído.")
+
+
+def anexar_resultados_csv(df_novos: pd.DataFrame, caminho: str) -> None:
+    """Anexa somente as novas linhas ao CSV existente, sem apagar o conteúdo anterior.
+
+    Se o arquivo não existir, cria com cabeçalho. Se existir, escreve em modo append
+    sem cabeçalho, preservando a ordem de colunas: concurso, data, d1..d15.
+    """
+    colunas = ["concurso", "data"] + [f"d{i}" for i in range(1, 16)]
+    df_out = df_novos[colunas].copy()
+
+    arquivo_existe = os.path.exists(caminho)
+    if not arquivo_existe:
+        logger.info(f"[CSV] Criando arquivo {caminho} com {len(df_out)} novos registros...")
+        df_out.to_csv(caminho, index=False, mode="w", header=True)
+    else:
+        logger.info(f"[CSV] Anexando {len(df_out)} novos registros em {caminho}...")
+        df_out.to_csv(caminho, index=False, mode="a", header=False)
+    logger.info("[CSV] Operação de append concluída.")
 
 
 def atualizar_resultados_ate_data(
@@ -205,11 +240,17 @@ def atualizar_resultados_ate_data(
     if novas_linhas:
         df_novos = pd.DataFrame(novas_linhas)
         df_novos["data"] = pd.to_datetime(df_novos["data"]).dt.date
-        logger.info("[ATUALIZAÇÃO] Concatenando novos concursos ao dataframe existente...")
+        logger.info("[ATUALIZAÇÃO] Concatenando novos concursos ao dataframe existente (memória)...")
         df = pd.concat([df, df_novos], ignore_index=True)
         df = df.drop_duplicates(subset=["concurso"]).sort_values("concurso")
         logger.info(f"[ATUALIZAÇÃO] Dataframe agora possui {len(df)} concursos.")
-        salvar_resultados_csv(df, caminho_csv)
+
+        # Persistência: se já havia dados locais, apenas anexar novas linhas para não apagar o arquivo.
+        if ultimo_concurso_existente > 0 and os.path.exists(caminho_csv):
+            anexar_resultados_csv(df_novos, caminho_csv)
+        else:
+            # Primeira criação do arquivo: salva o conjunto completo disponível até a data limite.
+            salvar_resultados_csv(df, caminho_csv)
     else:
         logger.info("[ATUALIZAÇÃO] Nenhum concurso novo para adicionar ao CSV.")
 
@@ -686,6 +727,17 @@ def main():
 
         logger.info("[ETAPA] Atualizando/Carregando resultados até a data limite...")
         df = atualizar_resultados_ate_data(data_limite, CSV_PATH)
+        if df.empty:
+            # Fallback: se a data informada é anterior ao primeiro concurso, usar a data mínima disponível
+            data_min = obter_data_minima_disponivel()
+            if data_min and data_limite < data_min:
+                logger.warning(
+                    f"[AVISO] Nenhum concurso até {data_limite}. Primeira data disponível é {data_min}. "
+                    f"Refazendo atualização usando {data_min}."
+                )
+                data_limite = data_min
+                df = atualizar_resultados_ate_data(data_limite, CSV_PATH)
+
         if df.empty:
             logger.error("[ERRO] Nenhum concurso disponível até a data informada. Encerrando.")
             return

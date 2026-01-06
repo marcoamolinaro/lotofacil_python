@@ -1,0 +1,6 @@
+argparse
+dataclasses
+datetime
+pathlib
+typing
+requests
